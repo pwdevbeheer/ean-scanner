@@ -2,7 +2,7 @@
 <html lang="nl">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
 <title>EAN Scanner</title>
 <style>
 * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -24,43 +24,51 @@ button:active { background: #f0f0f0; }
   border-radius: 8px;
   overflow: hidden;
   margin-bottom: 0.75rem;
-  background: #000;
+  background: #111;
+  aspect-ratio: 4/3;
 }
 #scanner-video {
-  display: block;
+  position: absolute;
+  top: 0; left: 0;
   width: 100%;
-  height: auto;
-  min-height: 240px;
+  height: 100%;
   object-fit: cover;
 }
-#scan-box {
+#scan-overlay {
   position: absolute;
-  left: 50%; top: 50%;
-  transform: translate(-50%, -50%);
-  width: 72%; height: 80px;
-  border: 2px solid rgba(255,255,255,0.9);
-  border-radius: 5px;
-  box-shadow: 0 0 0 9999px rgba(0,0,0,0.35);
+  top: 0; left: 0; right: 0; bottom: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
   pointer-events: none;
+}
+#scan-box {
+  width: 75%;
+  height: 80px;
+  border: 2px solid rgba(255,255,255,0.9);
+  border-radius: 6px;
+  box-shadow: 0 0 0 9999px rgba(0,0,0,0.4);
+  position: relative;
+  overflow: hidden;
 }
 #scan-line {
   position: absolute;
-  left: 14%; width: 72%; height: 2px;
-  background: rgba(255,50,50,0.9);
+  left: 0; right: 0;
+  height: 2px;
+  background: rgba(255,50,50,0.95);
   animation: sweep 1.8s ease-in-out infinite;
-  pointer-events: none;
 }
-@keyframes sweep { 0%,100% { top: 28%; } 50% { top: 68%; } }
+@keyframes sweep { 0%,100% { top: 5%; } 50% { top: 90%; } }
 #scan-hint {
   position: absolute;
-  bottom: 8px; left: 0; right: 0;
+  bottom: 10px; left: 0; right: 0;
   text-align: center;
-  color: rgba(255,255,255,0.8);
+  color: rgba(255,255,255,0.85);
   font-size: 13px;
-  pointer-events: none;
 }
 
-#lib-status { font-size: 12px; color: #888; margin-top: 6px; min-height: 18px; }
+#lib-status { font-size: 12px; color: #888; margin-top: 6px; }
 .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 10px; }
 .btn-row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 1rem; }
 #label-mock { background: #f8f8f5; border: 1px solid #ddd; border-radius: 8px; padding: 10px 14px; font-family: monospace; font-size: 12px; line-height: 1.85; width: 195px; margin-top: 0.75rem; }
@@ -88,24 +96,20 @@ button:active { background: #f0f0f0; }
   <div class="step-label">Barcode scannen</div>
 
   <div id="scanner-wrap">
-    <video id="scanner-video"
-      autoplay muted playsinline
-      webkit-playsinline
-      x5-playsinline
-      x5-video-player-type="h5"
-      x5-video-player-fullscreen="false">
-    </video>
-    <div id="scan-box"></div>
-    <div id="scan-line"></div>
-    <div id="scan-hint">Richt op EAN-barcode</div>
+    <video id="scanner-video" autoplay muted playsinline webkit-playsinline></video>
+    <div id="scan-overlay">
+      <div id="scan-box"><div id="scan-line"></div></div>
+      <div id="scan-hint">Richt de barcode op het kader</div>
+    </div>
   </div>
+
+  <canvas id="decode-canvas" style="display:none;"></canvas>
 
   <div id="start-area">
     <p style="font-size:13px; color:#666; margin-bottom:0.75rem;">Zorg voor goede verlichting en houd de barcode stil voor de camera.</p>
     <button id="start-btn">📷 Camera starten</button>
     <div id="lib-status">Bibliotheek laden…</div>
   </div>
-
   <div id="scanning-status" style="display:none; margin-top:0.75rem; font-size:13px; color:#666;">
     <span class="spinner"></span>Zoeken naar barcode…
   </div>
@@ -162,7 +166,7 @@ const DB = {
 };
 
 const $ = id => document.getElementById(id);
-let codeReader = null, scanning = false, currentItem = null, libReady = false;
+let stream = null, decodeInterval = null, scanning = false, currentItem = null, libReady = false;
 
 window.onLibLoad = function() {
   libReady = true;
@@ -175,9 +179,10 @@ window.onLibError = function() {
 };
 
 function stopScanner() {
-  if (codeReader) { try { codeReader.reset(); } catch(e){} codeReader = null; }
+  if (decodeInterval) { clearInterval(decodeInterval); decodeInterval = null; }
+  if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; }
   const v = $('scanner-video');
-  if (v && v.srcObject) { v.srcObject.getTracks().forEach(t => t.stop()); v.srcObject = null; }
+  v.srcObject = null;
   scanning = false;
   $('scanner-wrap').style.display = 'none';
   $('start-area').style.display = '';
@@ -216,34 +221,60 @@ function reset() {
 $('start-btn').addEventListener('click', async () => {
   if (scanning) return;
   if (!libReady) { alert('Even geduld, bibliotheek nog niet klaar.'); return; }
-  scanning = true;
-
-  $('scanner-wrap').style.display = '';
-  $('start-area').style.display = 'none';
-  $('scanning-status').style.display = '';
-  $('stop-area').style.display = '';
-  $('result-card').style.display = 'none';
-  $('nomatch-card').style.display = 'none';
 
   try {
-    const stream = await navigator.mediaDevices.getUserMedia({
-      video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 } }
+    stream = await navigator.mediaDevices.getUserMedia({
+      video: {
+        facingMode: { ideal: 'environment' },
+        width: { ideal: 1280 },
+        height: { ideal: 720 }
+      },
+      audio: false
     });
 
     const video = $('scanner-video');
     video.srcObject = stream;
-    video.setAttribute('playsinline', true);
-    await video.play();
+    video.setAttribute('playsinline', '');
+    video.setAttribute('webkit-playsinline', '');
+    video.muted = true;
 
-    codeReader = new ZXing.BrowserMultiFormatReader();
-    codeReader.decodeFromStream(stream, video, (result, err) => {
-      if (result) {
-        const ean = result.getText();
-        const item = DB[ean];
-        if (item) showResult(item, ean);
-        else showNoMatch(ean);
-      }
+    await new Promise((resolve, reject) => {
+      video.onloadedmetadata = () => {
+        video.play().then(resolve).catch(reject);
+      };
+      setTimeout(reject, 5000);
     });
+
+    scanning = true;
+    $('scanner-wrap').style.display = '';
+    $('start-area').style.display = 'none';
+    $('scanning-status').style.display = '';
+    $('stop-area').style.display = '';
+    $('result-card').style.display = 'none';
+    $('nomatch-card').style.display = 'none';
+
+    const canvas = $('decode-canvas');
+    const ctx = canvas.getContext('2d');
+    const reader = new ZXing.BrowserMultiFormatReader();
+
+    decodeInterval = setInterval(async () => {
+      if (!scanning || video.readyState < 2) return;
+      try {
+        canvas.width = video.videoWidth;
+        canvas.height = video.videoHeight;
+        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+        const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+        const luminanceSource = new ZXing.RGBLuminanceSource(imageData.data, canvas.width, canvas.height);
+        const binaryBitmap = new ZXing.BinaryBitmap(new ZXing.HybridBinarizer(luminanceSource));
+        const result = reader.decodeBitmap(binaryBitmap);
+        if (result) {
+          const ean = result.getText();
+          const item = DB[ean];
+          if (item) showResult(item, ean);
+          else showNoMatch(ean);
+        }
+      } catch(e) {}
+    }, 300);
 
   } catch(e) {
     stopScanner();
