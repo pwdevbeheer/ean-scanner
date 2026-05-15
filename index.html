@@ -16,12 +16,50 @@ body { font-family: system-ui, sans-serif; background: #f5f5f5; padding: 1rem; f
 .badge-warn { background: #FAEEDA; color: #854F0B; }
 button { display: block; width: 100%; padding: 13px; font-size: 15px; font-weight: 500; background: #fff; border: 1px solid #ccc; border-radius: 8px; cursor: pointer; margin-bottom: 6px; }
 button:active { background: #f0f0f0; }
-#scanner-wrap { position: relative; width: 100%; background: #000; border-radius: 8px; overflow: hidden; display: none; margin-bottom: 0.75rem; }
-#scanner-video { width: 100%; display: block; }
-#scan-box { position: absolute; left: 50%; top: 50%; transform: translate(-50%,-50%); width: 72%; height: 80px; border: 2px solid rgba(255,255,255,0.85); border-radius: 5px; box-shadow: 0 0 0 9999px rgba(0,0,0,0.38); }
-#scan-line { position: absolute; left: 14%; width: 72%; height: 2px; background: rgba(255,60,60,0.9); animation: sweep 1.8s ease-in-out infinite; }
+
+#scanner-wrap {
+  display: none;
+  position: relative;
+  width: 100%;
+  border-radius: 8px;
+  overflow: hidden;
+  margin-bottom: 0.75rem;
+  background: #000;
+}
+#scanner-video {
+  display: block;
+  width: 100%;
+  height: auto;
+  min-height: 240px;
+  object-fit: cover;
+}
+#scan-box {
+  position: absolute;
+  left: 50%; top: 50%;
+  transform: translate(-50%, -50%);
+  width: 72%; height: 80px;
+  border: 2px solid rgba(255,255,255,0.9);
+  border-radius: 5px;
+  box-shadow: 0 0 0 9999px rgba(0,0,0,0.35);
+  pointer-events: none;
+}
+#scan-line {
+  position: absolute;
+  left: 14%; width: 72%; height: 2px;
+  background: rgba(255,50,50,0.9);
+  animation: sweep 1.8s ease-in-out infinite;
+  pointer-events: none;
+}
 @keyframes sweep { 0%,100% { top: 28%; } 50% { top: 68%; } }
-#scan-hint { position: absolute; bottom: 8px; left: 0; right: 0; text-align: center; color: rgba(255,255,255,0.75); font-size: 13px; }
+#scan-hint {
+  position: absolute;
+  bottom: 8px; left: 0; right: 0;
+  text-align: center;
+  color: rgba(255,255,255,0.8);
+  font-size: 13px;
+  pointer-events: none;
+}
+
 #lib-status { font-size: 12px; color: #888; margin-top: 6px; min-height: 18px; }
 .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 10px; }
 .btn-row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 1rem; }
@@ -32,6 +70,7 @@ button:active { background: #f0f0f0; }
 .divider { border: none; border-top: 1px solid #eee; margin: 0.75rem 0; }
 .spinner { display: inline-block; width: 14px; height: 14px; border: 2px solid #ccc; border-top-color: #333; border-radius: 50%; animation: spin 0.7s linear infinite; vertical-align: middle; margin-right: 6px; }
 @keyframes spin { to { transform: rotate(360deg); } }
+
 @media print {
   body > *:not(#print-area) { display: none !important; }
   #print-area { display: block !important; }
@@ -47,18 +86,29 @@ button:active { background: #f0f0f0; }
 
 <div class="card">
   <div class="step-label">Barcode scannen</div>
+
   <div id="scanner-wrap">
-    <video id="scanner-video" autoplay muted playsinline></video>
+    <video id="scanner-video"
+      autoplay muted playsinline
+      webkit-playsinline
+      x5-playsinline
+      x5-video-player-type="h5"
+      x5-video-player-fullscreen="false">
+    </video>
     <div id="scan-box"></div>
     <div id="scan-line"></div>
     <div id="scan-hint">Richt op EAN-barcode</div>
   </div>
+
   <div id="start-area">
     <p style="font-size:13px; color:#666; margin-bottom:0.75rem;">Zorg voor goede verlichting en houd de barcode stil voor de camera.</p>
     <button id="start-btn">📷 Camera starten</button>
     <div id="lib-status">Bibliotheek laden…</div>
   </div>
-  <div id="scanning-status" style="display:none; margin-top:0.75rem; font-size:13px; color:#666;"><span class="spinner"></span>Zoeken naar barcode…</div>
+
+  <div id="scanning-status" style="display:none; margin-top:0.75rem; font-size:13px; color:#666;">
+    <span class="spinner"></span>Zoeken naar barcode…
+  </div>
   <div id="stop-area" style="display:none; margin-top:0.75rem;">
     <button id="stop-btn" style="color:#666;">✕ Camera stoppen</button>
   </div>
@@ -167,6 +217,7 @@ $('start-btn').addEventListener('click', async () => {
   if (scanning) return;
   if (!libReady) { alert('Even geduld, bibliotheek nog niet klaar.'); return; }
   scanning = true;
+
   $('scanner-wrap').style.display = '';
   $('start-area').style.display = 'none';
   $('scanning-status').style.display = '';
@@ -175,36 +226,25 @@ $('start-btn').addEventListener('click', async () => {
   $('nomatch-card').style.display = 'none';
 
   try {
+    const stream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 } }
+    });
+
+    const video = $('scanner-video');
+    video.srcObject = stream;
+    video.setAttribute('playsinline', true);
+    await video.play();
+
     codeReader = new ZXing.BrowserMultiFormatReader();
+    codeReader.decodeFromStream(stream, video, (result, err) => {
+      if (result) {
+        const ean = result.getText();
+        const item = DB[ean];
+        if (item) showResult(item, ean);
+        else showNoMatch(ean);
+      }
+    });
 
-    const devices = await navigator.mediaDevices.enumerateDevices();
-    const videoDevices = devices.filter(d => d.kind === 'videoinput');
-    const backCam = videoDevices.find(d => /back|rear|environment/i.test(d.label));
-    const deviceId = backCam ? backCam.deviceId : (videoDevices.length > 0 ? videoDevices[videoDevices.length - 1].deviceId : undefined);
-
-    if (deviceId) {
-      await codeReader.decodeFromVideoDevice(deviceId, 'scanner-video', (result, err) => {
-        if (result) {
-          const ean = result.getText();
-          const item = DB[ean];
-          if (item) showResult(item, ean);
-          else showNoMatch(ean);
-        }
-      });
-    } else {
-      await codeReader.decodeFromConstraints(
-        { video: { facingMode: 'environment' } },
-        'scanner-video',
-        (result, err) => {
-          if (result) {
-            const ean = result.getText();
-            const item = DB[ean];
-            if (item) showResult(item, ean);
-            else showNoMatch(ean);
-          }
-        }
-      );
-    }
   } catch(e) {
     stopScanner();
     $('lib-status').textContent = 'Camera-fout: ' + (e.message || e);
