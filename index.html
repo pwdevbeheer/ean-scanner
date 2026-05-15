@@ -1,0 +1,235 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>EAN Scanner</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: system-ui, sans-serif; background: #f5f5f5; padding: 1rem; font-size: 15px; }
+.card { background: #fff; border: 1px solid #e0e0e0; border-radius: 12px; padding: 1rem 1.125rem; margin-bottom: 1rem; }
+.step-label { font-size: 11px; font-weight: 600; color: #888; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0.5rem; }
+.label-sm { font-size: 12px; color: #888; margin-bottom: 2px; }
+.val { font-size: 15px; font-weight: 600; color: #111; }
+.badge { display: inline-block; font-size: 11px; font-weight: 600; padding: 3px 10px; border-radius: 99px; }
+.badge-ok { background: #EAF3DE; color: #3B6D11; }
+.badge-warn { background: #FAEEDA; color: #854F0B; }
+button { display: block; width: 100%; padding: 13px; font-size: 15px; font-weight: 500; background: #fff; border: 1px solid #ccc; border-radius: 8px; cursor: pointer; margin-bottom: 6px; }
+button:active { background: #f0f0f0; }
+#scanner-wrap { position: relative; width: 100%; background: #000; border-radius: 8px; overflow: hidden; display: none; margin-bottom: 0.75rem; }
+#scanner-video { width: 100%; display: block; }
+#scan-box { position: absolute; left: 50%; top: 50%; transform: translate(-50%,-50%); width: 72%; height: 80px; border: 2px solid rgba(255,255,255,0.85); border-radius: 5px; box-shadow: 0 0 0 9999px rgba(0,0,0,0.38); }
+#scan-line { position: absolute; left: 14%; width: 72%; height: 2px; background: rgba(255,60,60,0.9); animation: sweep 1.8s ease-in-out infinite; }
+@keyframes sweep { 0%,100% { top: 28%; } 50% { top: 68%; } }
+#scan-hint { position: absolute; bottom: 8px; left: 0; right: 0; text-align: center; color: rgba(255,255,255,0.75); font-size: 13px; }
+#lib-status { font-size: 12px; color: #888; margin-top: 6px; min-height: 18px; }
+.two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 10px; }
+.btn-row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 1rem; }
+#label-mock { background: #f8f8f5; border: 1px solid #ddd; border-radius: 8px; padding: 10px 14px; font-family: monospace; font-size: 12px; line-height: 1.85; width: 195px; margin-top: 0.75rem; }
+.lm-cat { font-size: 10px; color: #888; }
+.lm-big { font-size: 15px; font-weight: bold; }
+.lm-sm { font-size: 11px; }
+.divider { border: none; border-top: 1px solid #eee; margin: 0.75rem 0; }
+.spinner { display: inline-block; width: 14px; height: 14px; border: 2px solid #ccc; border-top-color: #333; border-radius: 50%; animation: spin 0.7s linear infinite; vertical-align: middle; margin-right: 6px; }
+@keyframes spin { to { transform: rotate(360deg); } }
+@media print {
+  body > *:not(#print-area) { display: none !important; }
+  #print-area { display: block !important; }
+}
+#print-area { display: none; width: 62mm; padding: 3mm; font-family: monospace; font-size: 9pt; line-height: 1.5; }
+#print-area .pt { font-size: 7pt; color: #666; margin-bottom: 0.5mm; }
+#print-area .pb { font-size: 13pt; font-weight: bold; margin-bottom: 2mm; word-break: break-all; }
+#print-area .pn { font-size: 10pt; font-weight: bold; margin-bottom: 2mm; word-break: break-all; }
+#print-area hr { border: none; border-top: 0.5px solid #aaa; margin: 2mm 0; }
+</style>
+</head>
+<body>
+
+<div class="card">
+  <div class="step-label">Barcode scannen</div>
+  <div id="scanner-wrap">
+    <video id="scanner-video" autoplay muted playsinline></video>
+    <div id="scan-box"></div>
+    <div id="scan-line"></div>
+    <div id="scan-hint">Richt op EAN-barcode</div>
+  </div>
+  <div id="start-area">
+    <p style="font-size:13px; color:#666; margin-bottom:0.75rem;">Zorg voor goede verlichting en houd de barcode stil voor de camera.</p>
+    <button id="start-btn">📷 Camera starten</button>
+    <div id="lib-status">Bibliotheek laden…</div>
+  </div>
+  <div id="scanning-status" style="display:none; margin-top:0.75rem; font-size:13px; color:#666;"><span class="spinner"></span>Zoeken naar barcode…</div>
+  <div id="stop-area" style="display:none; margin-top:0.75rem;">
+    <button id="stop-btn" style="color:#666;">✕ Camera stoppen</button>
+  </div>
+</div>
+
+<div id="result-card" class="card" style="display:none;">
+  <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:0.75rem;">
+    <div class="step-label" style="margin:0;">Artikel gevonden</div>
+    <span class="badge badge-ok">✓ Match</span>
+  </div>
+  <div class="two-col">
+    <div><div class="label-sm">Tarief</div><div class="val" id="r-tarief"></div></div>
+    <div><div class="label-sm">Voorraadlocatie</div><div class="val" id="r-loc"></div></div>
+  </div>
+  <div style="margin-bottom:8px;"><div class="label-sm">Omschrijving</div><div class="val" id="r-omsch" style="font-weight:400; font-size:13px;"></div></div>
+  <div><div class="label-sm">EAN</div><div class="val" id="r-ean" style="font-family:monospace; font-size:12px; font-weight:400;"></div></div>
+  <hr class="divider">
+  <div class="step-label">Label voorbeeld</div>
+  <div id="label-mock">
+    <div class="lm-cat">TARIEF</div><div class="lm-big" id="lm-tarief"></div>
+    <div class="lm-cat" style="margin-top:5px;">OMSCHRIJVING</div><div class="lm-sm" id="lm-omsch"></div>
+    <div class="lm-cat" style="margin-top:5px;">EAN</div><div class="lm-sm" id="lm-ean"></div>
+    <div class="lm-cat" style="margin-top:5px;">LOCATIE</div><div class="lm-big" id="lm-loc"></div>
+  </div>
+  <div class="btn-row">
+    <button id="print-btn">🖨 Afdrukken</button>
+    <button id="next-btn" style="color:#666;">↺ Volgend artikel</button>
+  </div>
+</div>
+
+<div id="nomatch-card" class="card" style="display:none;">
+  <span class="badge badge-warn">⚠ Niet gevonden</span>
+  <p style="font-size:13px; color:#666; margin:8px 0 10px;">EAN <span id="nm-ean" style="font-family:monospace; color:#111;"></span> staat niet in de database.</p>
+  <button id="retry-btn">↺ Opnieuw scannen</button>
+</div>
+
+<div id="print-area">
+  <div class="pt">TARIEF</div><div class="pb" id="pa-tarief"></div>
+  <hr>
+  <div class="pt">OMSCHRIJVING</div><div class="pn" id="pa-omsch"></div>
+  <div class="pt" style="margin-top:2mm;">EAN</div><div class="pn" id="pa-ean"></div>
+  <hr>
+  <div class="pt">LOCATIE</div><div class="pb" id="pa-loc"></div>
+</div>
+
+<script>
+const DB = {
+  "3430650361379": { tarief:"A173858", omschrijving:"VSH SUDOPRESS BOCHT 90 FØ 22",    voorraadlocatie:"A0.01" },
+  "3430650360464": { tarief:"A173897", omschrijving:"VSH SUDO KOPR OVERG ØF22XRP1/2", voorraadlocatie:"A0.02" },
+  "0200017013110": { tarief:"A347590", omschrijving:"testregel spelletje jenga",       voorraadlocatie:"A0.03" }
+};
+
+const $ = id => document.getElementById(id);
+let codeReader = null, scanning = false, currentItem = null, libReady = false;
+
+window.onLibLoad = function() {
+  libReady = true;
+  $('lib-status').textContent = 'Gereed om te scannen.';
+  $('lib-status').style.color = '#3B6D11';
+};
+window.onLibError = function() {
+  $('lib-status').textContent = 'Bibliotheek laden mislukt — herlaad de pagina.';
+  $('lib-status').style.color = '#A32D2D';
+};
+
+function stopScanner() {
+  if (codeReader) { try { codeReader.reset(); } catch(e){} codeReader = null; }
+  const v = $('scanner-video');
+  if (v && v.srcObject) { v.srcObject.getTracks().forEach(t => t.stop()); v.srcObject = null; }
+  scanning = false;
+  $('scanner-wrap').style.display = 'none';
+  $('start-area').style.display = '';
+  $('scanning-status').style.display = 'none';
+  $('stop-area').style.display = 'none';
+}
+
+function showResult(item, ean) {
+  currentItem = { ...item, ean };
+  stopScanner();
+  $('r-tarief').textContent = item.tarief;
+  $('r-loc').textContent = item.voorraadlocatie;
+  $('r-omsch').textContent = item.omschrijving;
+  $('r-ean').textContent = ean;
+  $('lm-tarief').textContent = item.tarief;
+  $('lm-omsch').textContent = item.omschrijving;
+  $('lm-ean').textContent = ean;
+  $('lm-loc').textContent = item.voorraadlocatie;
+  $('result-card').style.display = '';
+  $('nomatch-card').style.display = 'none';
+}
+
+function showNoMatch(ean) {
+  stopScanner();
+  $('nm-ean').textContent = ean;
+  $('nomatch-card').style.display = '';
+  $('result-card').style.display = 'none';
+}
+
+function reset() {
+  $('result-card').style.display = 'none';
+  $('nomatch-card').style.display = 'none';
+  currentItem = null;
+}
+
+$('start-btn').addEventListener('click', async () => {
+  if (scanning) return;
+  if (!libReady) { alert('Even geduld, bibliotheek nog niet klaar.'); return; }
+  scanning = true;
+  $('scanner-wrap').style.display = '';
+  $('start-area').style.display = 'none';
+  $('scanning-status').style.display = '';
+  $('stop-area').style.display = '';
+  $('result-card').style.display = 'none';
+  $('nomatch-card').style.display = 'none';
+
+  try {
+    codeReader = new ZXing.BrowserMultiFormatReader();
+
+    const devices = await navigator.mediaDevices.enumerateDevices();
+    const videoDevices = devices.filter(d => d.kind === 'videoinput');
+    const backCam = videoDevices.find(d => /back|rear|environment/i.test(d.label));
+    const deviceId = backCam ? backCam.deviceId : (videoDevices.length > 0 ? videoDevices[videoDevices.length - 1].deviceId : undefined);
+
+    if (deviceId) {
+      await codeReader.decodeFromVideoDevice(deviceId, 'scanner-video', (result, err) => {
+        if (result) {
+          const ean = result.getText();
+          const item = DB[ean];
+          if (item) showResult(item, ean);
+          else showNoMatch(ean);
+        }
+      });
+    } else {
+      await codeReader.decodeFromConstraints(
+        { video: { facingMode: 'environment' } },
+        'scanner-video',
+        (result, err) => {
+          if (result) {
+            const ean = result.getText();
+            const item = DB[ean];
+            if (item) showResult(item, ean);
+            else showNoMatch(ean);
+          }
+        }
+      );
+    }
+  } catch(e) {
+    stopScanner();
+    $('lib-status').textContent = 'Camera-fout: ' + (e.message || e);
+    $('lib-status').style.color = '#A32D2D';
+    $('start-area').style.display = '';
+  }
+});
+
+$('stop-btn').addEventListener('click', stopScanner);
+$('retry-btn').addEventListener('click', reset);
+$('next-btn').addEventListener('click', reset);
+
+$('print-btn').addEventListener('click', () => {
+  if (!currentItem) return;
+  $('pa-tarief').textContent = currentItem.tarief;
+  $('pa-omsch').textContent = currentItem.omschrijving;
+  $('pa-ean').textContent = currentItem.ean;
+  $('pa-loc').textContent = currentItem.voorraadlocatie;
+  $('print-area').style.display = 'block';
+  window.print();
+  setTimeout(() => { $('print-area').style.display = 'none'; }, 500);
+});
+</script>
+
+<script src="https://cdn.jsdelivr.net/npm/@zxing/library@0.19.1/umd/index.min.js" onload="onLibLoad()" onerror="onLibError()"></script>
+
+</body>
+</html>
